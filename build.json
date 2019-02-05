@@ -1,0 +1,461 @@
+{
+    "AWSTemplateFormatVersion": "2010-09-09",
+    "Description": "CloudFormation Template to deploy EDM EC2 instance",
+    "Parameters": {
+        "Client": {
+            "Type": "String",
+            "Description": "client",
+            "Default": "JIB"
+        },
+        "Hostname": {
+            "Type": "String",
+            "Description": "Hostname - maximum 15 characters",
+            "Default": "EDM01-18",
+            "MaxLength": "15"
+        },
+        "OS": {
+            "Type": "String",
+            "Description": "OS Version",
+            "Default": "WindowsServer2016Base",
+            "AllowedValues": [
+                "WindowsServer2012R2Base",
+                "WindowsServer2016Base"
+            ]
+        },
+        "InstanceSize": {
+            "Type": "String",
+            "Description": "Instance Size",
+            "Default": "t2.small",
+            "AllowedValues": [
+                "t2.micro",
+                "t2.small",
+                "t2.medium"
+            ]
+        },
+        "DomainDNSName": {
+            "Type": "String",
+            "Description": "Fully Qualified Domain Name",
+            "Default": "jitbcloud.net"
+        },
+        "DomainNetBiosName": {
+            "Type": "String",
+            "Description": "NETBIOS Domain Name",
+            "Default": "jitbcloud"
+        },
+        "DomainMode": {
+            "Type": "String",
+            "Description": "Domain Mode",
+            "Default": "Win2012R2"
+        },
+        "ForestMode": {
+            "Type": "String",
+            "Description": "Domain Mode",
+            "Default": "Win2012R2"
+        },
+        "Environment": {
+            "Type": "String",
+            "Description": "Specific Environment for build objects",
+            "Default": "Test",
+            "AllowedValues": [
+                "Test",
+                "Dev",
+                "Prod"
+            ]
+        },
+        "AvailabilityZone": {
+            "Type": "String",
+            "Description": "Default AZ",
+            "AllowedValues": [
+                "us-west-2a",
+                "us-west-2b"
+            ],
+            "Default": "us-west-2a"
+        },
+        "KeyPair": {
+            "Type": "String",
+            "Description": "KeyPair Name",
+            "Default": "Automation-01"
+        },
+        "ApplicationSetup": {
+            "Type": "String",
+            "Description": "Application Environment to build",
+            "Default": "EDM",
+            "AllowedValues": [
+                "EDM",
+                "SOMEAPP"
+            ]
+        },
+        "Owner": {
+            "Description": "Resource Owner - defaults to EDM",
+            "Type": "String",
+            "Default": "EDM"
+        },
+        "Project": {
+            "Type": "String",
+            "Description": "Tag Value for Project",
+            "Default": "EDM-Test"
+        },
+        "Application": {
+            "Type": "String",
+            "Description": "Tag value for Application - leveraged for Active Directory Group creation.",
+            "Default": "Test",
+            "AllowedValues": [
+                "Prod",
+                "Test"
+            ]
+        },
+        "S3BucketName": {
+            "Default": "jib-build",
+            "Description": "S3 bucket",
+            "Type": "String"
+        }
+    },
+    "Mappings": {
+        "AMIMap": {
+            "WindowsServer2012R2Base": {
+                "ImageId": "ami-0b144285224a57d53"
+            },
+            "WindowsServer2016Base": {
+                "ImageId": "ami-02bc325deb3063e61"
+            }
+        },
+        "SubnetMap": {
+            "us-west-2a": {
+                "Prod": "subnet-1160125a",
+                "Test": "subnet-1160125a"
+            },
+            "us-west-2b": {
+                "Prod": "subnet-eac49593",
+                "Test": "subnet-eac49593"
+            }
+        }
+    },
+    "Resources": {
+        "Profile": {
+            "Type": "AWS::IAM::InstanceProfile",
+            "Properties": {
+                "Roles": [
+                    {
+                        "Ref": "HostRole"
+                    }
+                ],
+                "Path": "/",
+                "InstanceProfileName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "instance-profile-",
+                            {
+                                "Ref": "S3BucketName"
+                            }
+                        ]
+                    ]
+                }
+            }
+        },
+        "HostRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "RoleName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "role-s3-read-",
+                            {
+                                "Ref": "S3BucketName"
+                            }
+                        ]
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Action": [
+                                        "s3:GetObject"
+                                    ],
+                                    "Resource": {
+                                        "Fn::Join": [
+                                            "",
+                                            [
+                                                "arn:aws:s3:::",
+                                                {
+                                                    "Ref": "S3BucketName"
+                                                },
+                                                "/*"
+                                            ]
+                                        ]
+                                    },
+                                    "Effect": "Allow"
+                                }
+                            ]
+                        },
+                        "PolicyName": "s3-policy-read"
+                    }
+                ],
+                "Path": "/",
+                "AssumeRolePolicyDocument": {
+                    "Statement": [
+                        {
+                            "Action": [
+                                "sts:AssumeRole"
+                            ],
+                            "Principal": {
+                                "Service": [
+                                    "ec2.amazonaws.com"
+                                ]
+                            },
+                            "Effect": "Allow"
+                        }
+                    ],
+                    "Version": "2012-10-17"
+                }
+            }
+        },
+        "Instance": {
+            "Type": "AWS::EC2::Instance",
+            "Metadata": {
+                "AWS::CloudFormation::Authentication": {
+                    "S3AccessCreds": {
+                        "type": "S3",
+                        "buckets": [
+                            {
+                                "Ref": "S3BucketName"
+                            }
+                        ],
+                        "roleName": {
+                            "Ref": "HostRole"
+                        }
+                    }
+                },
+                "AWS::CloudFormation::Init": {
+                    "configSets": {
+                        "config": [
+                            "get-files",
+                            "configure-instance"
+                        ]
+                    },
+                    "get-files": {
+                        "files": {
+                            "c:\\downloads\\scripts\\Joindomainv5.ps1": {
+                                "source": "https://s3-us-west-2.amazonaws.com/jib-build/Joindomainv5.ps1",
+                                "authentication": "S3AccessCreds"
+                            },
+                            "c:\\downloads\\scripts\\Joindomainv1.ps1": {
+                                "source": "https://s3-us-west-2.amazonaws.com/jib-build/Joindomainv1.ps1",
+                                "authentication": "S3AccessCreds"
+                            },
+                            "c:\\downloads\\files\\EDMServer.zip'": {
+                                "source": "https://s3-us-west-2.amazonaws.com/jib-build/EDMServer.zip",
+                                "authentication": "S3AccessCreds"
+                            },
+                            "c:\\downloads\\files\\jdk-8u201-windows-x64.exe": {
+                                "source": "https://s3-us-west-2.amazonaws.com/jib-build/jdk-8u201-windows-x64.exe",
+                                "authentication": "S3AccessCreds"
+                            },
+                            "c:\\downloads\\scripts\\configure-virus.ps1": {
+                                "source": "https://s3.amazonaws.com/jib-build/configure-virus.ps1",
+                                "authentication": "S3AccessCreds"
+                            }
+                        }
+                    },
+                    "configure-instance": {
+                        "commands": {
+                            "1-set-powershell-execution-policy": {
+                                "command": "powershell.exe -Command \"Set-ExecutionPolicy UnRestricted -Force\"",
+                                "waitAfterCompletion": "0"
+                            },
+                            "2-rename-computer": {
+                                "command": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "",
+                                            "powershell.exe -Command \"Rename-Computer -Restart -NewName \"",
+                                            {
+                                                "Ref": "Hostname"
+                                            }
+                                        ]
+                                    ]
+                                },
+                                "waitAfterCompletion": "0"
+                            },
+                            "3-join-domain": {
+                                "command": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "",
+                                            "powershell.exe -Command \"c:\\downloads\\scripts\\Joindomainv5.ps1\""
+                                        ]
+                                    ]
+                                },
+                                "waitAfterCompletion": "0"
+                            },
+                            "4-install-virus": {
+                                "command": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "",
+                                            "powershell.exe -Command \"c:\\downloads\\scripts\\Joindomainv1.ps1\""
+                                        ]
+                                    ]
+                                },
+                                "waitAfterCompletion": "0"
+                            }
+                        }
+                    }
+                }
+            },
+            "Properties": {
+                "DisableApiTermination": "false",
+                "AvailabilityZone": {
+                    "Fn::Sub": "${AvailabilityZone}"
+                },
+                "InstanceInitiatedShutdownBehavior": "stop",
+                "IamInstanceProfile": {
+                    "Ref": "Profile"
+                },
+                "ImageId": {
+                    "Fn::FindInMap": [
+                        "AMIMap",
+                        {
+                            "Ref": "OS"
+                        },
+                        "ImageId"
+                    ]
+                },
+                "InstanceType": {
+                    "Fn::Sub": "${InstanceSize}"
+                },
+                "KeyName": {
+                    "Fn::Sub": "${KeyPair}"
+                },
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "<powershell>\n",
+                                "cfn-init.exe ",
+                                " --stack ",
+                                {
+                                    "Ref": "AWS::StackId"
+                                },
+                                " --resource Instance",
+                                " --region ",
+                                {
+                                    "Ref": "AWS::Region"
+                                },
+                                " --configsets config",
+                                " -v \n",
+                                "cfn-signal.exe  ",
+                                " ---exit-code 0",
+                                " --region ",
+                                {
+                                    "Ref": "AWS::Region"
+                                },
+                                " --resource Instance",
+                                " --stack ",
+                                {
+                                    "Ref": "AWS::StackName"
+                                },
+                                "\n",
+                                "</powershell>\n"
+                            ]
+                        ]
+                    }
+                },
+                "Tags": [
+                    {
+                        "Key": "Environment",
+                        "Value": {
+                            "Fn::Sub": "${Environment}"
+                        }
+                    },
+                    {
+                        "Key": "Application",
+                        "Value": {
+                            "Fn::Sub": "${Application}"
+                        }
+                    },
+                    {
+                        "Key": "Name",
+                        "Value": {
+                            "Fn::Sub": "${Hostname}"
+                        }
+                    },
+                    {
+                        "Key": "Owner",
+                        "Value": {
+                            "Fn::Sub": "${Owner}"
+                        }
+                    },
+                    {
+                        "Key": "OS",
+                        "Value": {
+                            "Fn::Sub": "${OS}"
+                        }
+                    },
+                    {
+                        "Key": "Project",
+                        "Value": {
+                            "Fn::Sub": "${Project}"
+                        }
+                    }
+                ],
+                "NetworkInterfaces": [
+                    {
+                        "DeleteOnTermination": "true",
+                        "Description": "Primary network interface",
+                        "DeviceIndex": 0,
+                        "SubnetId": {
+                            "Fn::FindInMap": [
+                                "SubnetMap",
+                                {
+                                    "Ref": "AvailabilityZone"
+                                },
+                                {
+                                    "Ref": "Environment"
+                                }
+                            ]
+                        },
+                        "GroupSet": [
+                            "sg-0c8a1246d5fad283c"
+                        ]
+                    }
+                ]
+            }
+        }
+    },
+    "Outputs": {
+        "InstanceId": {
+            "Description": "InstanceId",
+            "Value": {
+                "Ref": "Instance"
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${Hostname}-${Environment}-InstanceId"
+                }
+            }
+        },
+        "InstancePrivateIP": {
+            "Description": "InstancePrivateIP",
+            "Value": {
+                "Fn::GetAtt": [
+                    "Instance",
+                    "PrivateIp"
+                ]
+            },
+            "Export": {
+                "Name": {
+                    "Fn::Sub": "${Hostname}-${Environment}-InstancePrivateIP"
+                }
+            }
+        }
+    }
+}
